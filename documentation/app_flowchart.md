@@ -1,14 +1,23 @@
 flowchart TD
-  Start[Landing Page]
-  SignUpPage[Sign Up Page]
-  SignInPage[Sign In Page]
-  AuthAPI[Authentication API Endpoint]
-  DashboardPage[Dashboard Page]
-  Start -->|Select Sign Up| SignUpPage
-  Start -->|Select Sign In| SignInPage
-  SignUpPage -->|Submit Credentials| AuthAPI
-  SignInPage -->|Submit Credentials| AuthAPI
-  AuthAPI -->|Success| DashboardPage
-  AuthAPI -->|Error| SignUpPage
-  AuthAPI -->|Error| SignInPage
-  DashboardPage -->|Click Logout| Start
+    A[User Visits App]
+    A --> B{Authenticated?}
+    B -- No --> C[SignIn or SignUp Page]
+    B -- Yes --> D[Dashboard Page]
+    C --> E{Has Account?}
+    E -- Yes --> F[SignIn Form]
+    E -- No --> G[SignUp Form]
+    F --> H[Submit Credentials]
+    G --> I[Submit Registration]
+    H --> J{Credentials Valid?}
+    J -- Yes --> D
+    J -- No --> K[Show Auth Error]
+    I --> L[Create Account]
+    L --> D
+    D --> M[Load Dashboard Data]
+    M --> N{Data Loaded?}
+    N -- Yes --> O[Display Dashboard]
+    N -- No --> P[Display Error]
+    O --> Q[User Interactions]
+    Q --> R{Configure Strategy?}
+    R -- Yes --> S[Strategy Configuration]
+    R -- No --> T[View Trade History]
