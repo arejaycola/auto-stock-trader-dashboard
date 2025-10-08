@@ -1,0 +1,16 @@
+{
+  "crons": [
+    {
+      "path": "/api/trader/execute-cycle",
+      "schedule": "0 30 9-16 * * 1-5"
+    },
+    {
+      "path": "/api/trader/execute-cycle",
+      "schedule": "0 0 10 * * 1-5"
+    },
+    {
+      "path": "/api/trader/execute-cycle",
+      "schedule": "0 30 13 * * 1-5"
+    }
+  ]
+}

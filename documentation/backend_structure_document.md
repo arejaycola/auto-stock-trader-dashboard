@@ -1,179 +1,204 @@
 # Backend Structure Document
 
-This document outlines the backend architecture, hosting, and infrastructure for the **codeguide-starter** project. It uses plain language so anyone can understand how the backend is set up and how it supports the application.
-
 ## 1. Backend Architecture
 
-- **Framework and Design Pattern**
-  - We use **Next.js API Routes** to handle all server-side logic. These routes live alongside the frontend code in the same repository, making development and deployment simpler.
-  - The backend follows a **layered pattern**:
-    1. **API Layer**: Receives requests (login, registration, data fetch).  
-    2. **Service Layer**: Contains the core business logic (user validation, password hashing).  
-    3. **Data Access Layer**: Talks to the database via a simple ORM (e.g., Prisma or TypeORM).
+**Overall Design:**
+- A Backend-for-Frontend (BFF) layer built with Next.js API routes handles authentication, session management and acts as a gateway between the React-based dashboard and core services.
+- Core trading logic and data processing are separated into dedicated microservices (Node.js or Python) to isolate heavy computation and ensure scalability.
+- A service-oriented pattern is used:
+  - **Controllers/Routes:** Define API endpoints in Next.js for user-driven requests.
+  - **Service Layer:** Encapsulates business logic (authentication, trade execution, data aggregation).
+  - **Data Access Layer:** Uses an ORM (e.g., Prisma) to interact with the database.
+  - **Message Broker:** Handles real-time event distribution (e.g., trade updates).
 
-- **Scalability**
-  - Stateless API routes can scale horizontally—new instances can spin up on demand.  
-  - We can add caching or a message queue (e.g., Redis or RabbitMQ) without changing the core code.
+**Scalability & Performance:**
+- Stateless API servers behind a load balancer allow horizontal scaling.
+- Microservices can be deployed independently, each scaled according to CPU/network needs.
+- Caching layer (Redis) reduces repeat database queries for hot data.
+- CDN (Vercel/CloudFront) serves static assets and offloads traffic from origin.
 
-- **Maintainability**
-  - Code for each feature is grouped by route (authentication, dashboard).  
-  - A service layer separates complex logic from request handling.
-
-- **Performance**
-  - Lightweight Node.js handlers keep response times low.  
-  - Future use of database connection pooling and Redis for caching repeated queries.
+**Maintainability:**
+- Clear module boundaries: each service owns its domain models and APIs.
+- TypeScript across codebase ensures type safety and predictable refactoring.
+- Shared utility libraries for logging, error handling, and configuration.
 
 ## 2. Database Management
 
-- **Database Choice**
-  - We recommend **PostgreSQL** for structured data and reliable transactions.  
-  - In-memory caching can be added later with **Redis** for session tokens or frequently read data.
+**Technologies Used:**
+- SQL Database: PostgreSQL (primary data store)
+- In-memory Cache: Redis (caching, pub/sub)
+- Optional NoSQL: MongoDB (audit logs, unstructured notifications)
 
-- **Data Storage and Access**
-  - Use an ORM like **Prisma** or **TypeORM** to map JavaScript/TypeScript objects to database tables.
-  - Connection pooling ensures efficient use of database connections under load.
-  - Migrations track schema changes over time, keeping development, staging, and production in sync.
+**Data Organization:**
+- Relational tables for users, portfolios, trades, strategies, and alerts.
+- Redis for session storage, rate-limiting tokens, and real-time publish/subscribe channels.
+- MongoDB collection(s) for append-only audit log entries and system events.
 
-- **Data Practices**
-  - Passwords are never stored in plain text—they are salted and hashed with **bcrypt** before saving.
-  - All outgoing data is typed and validated to prevent malformed records.
+**Data Practices:**
+- Automated daily backups of PostgreSQL to object storage (Amazon S3).
+- Read replicas for reporting and analytics workloads.
+- Database migrations managed via Prisma Migrate or Flyway.
+- Connection pooling and query timeouts to protect against overload.
 
 ## 3. Database Schema
 
-### Human-Readable Format
+**Human-Readable Overview:**
+- **Users:** Accounts with credentials, profile info, and role-based access.
+- **Portfolios:** Each user’s set of holdings, linked to trades and performance metrics.
+- **Trades:** Records of executed buy/sell orders, timestamps, and outcome details.
+- **Strategies:** User-configured algorithm parameters (entry/exit rules, risk limits).
+- **Alerts:** Thresholds for price, performance, and system notifications.
+- **AuditLogs (MongoDB):** Time-stamped events capturing user actions and errors.
 
-- **Users**
-  - **id**: Unique identifier  
-  - **email**: User’s email address (unique)  
-  - **password_hash**: Securely hashed password  
-  - **created_at**: Account creation timestamp
-
-- **Sessions**
-  - **id**: Unique session record  
-  - **user_id**: Links to a user  
-  - **token**: Random string for authentication  
-  - **expires_at**: When the token stops working  
-  - **created_at**: When the session was created
-
-- **DashboardItems** *(optional for dynamic data)*
-  - **id**: Unique record  
-  - **title**: Item title  
-  - **content**: Item details  
-  - **created_at**: When the item was added
-
-### SQL Schema (PostgreSQL)
+**PostgreSQL Schema (SQL):**
 ```sql
 -- Users table
 CREATE TABLE users (
   id SERIAL PRIMARY KEY,
   email VARCHAR(255) UNIQUE NOT NULL,
   password_hash VARCHAR(255) NOT NULL,
-  created_at TIMESTAMPTZ DEFAULT now()
+  full_name VARCHAR(255),
+  role VARCHAR(50) DEFAULT 'user',
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Sessions table
-CREATE TABLE sessions (
+-- Portfolios
+CREATE TABLE portfolios (
   id SERIAL PRIMARY KEY,
-  user_id INT REFERENCES users(id) ON DELETE CASCADE,
-  token VARCHAR(255) UNIQUE NOT NULL,
-  expires_at TIMESTAMPTZ NOT NULL,
-  created_at TIMESTAMPTZ DEFAULT now()
+  user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+  name VARCHAR(100) NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Dashboard items table
-CREATE TABLE dashboard_items (
+-- Trades
+CREATE TABLE trades (
   id SERIAL PRIMARY KEY,
-  title TEXT NOT NULL,
-  content TEXT,
-  created_at TIMESTAMPTZ DEFAULT now()
+  portfolio_id INTEGER REFERENCES portfolios(id) ON DELETE CASCADE,
+  symbol VARCHAR(10) NOT NULL,
+  side VARCHAR(4) NOT NULL, -- 'buy' or 'sell'
+  quantity NUMERIC(20,8) NOT NULL,
+  price NUMERIC(20,8) NOT NULL,
+  executed_at TIMESTAMP WITH TIME ZONE NOT NULL,
+  status VARCHAR(20) NOT NULL,
+  strategy_id INTEGER REFERENCES strategies(id)
 );
-```  
+
+-- Strategies
+CREATE TABLE strategies (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+  name VARCHAR(100) NOT NULL,
+  config JSONB NOT NULL, -- stores rules and parameters
+  is_active BOOLEAN DEFAULT TRUE,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Alerts
+CREATE TABLE alerts (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+  type VARCHAR(50) NOT NULL,
+  criteria JSONB NOT NULL,
+  is_sent BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+```
 
 ## 4. API Design and Endpoints
 
-- **Approach**: We follow a **RESTful** style, grouping related endpoints under `/api` directories.
+**Approach:**
+- RESTful API design via Next.js API routes.
+- JSON over HTTPS as the transport format.
+- Consistent response envelope: `{ success: boolean, data: ..., error?: string }`.
 
-- **Key Endpoints**
-  - `POST /api/auth/register`  
-    • Accepts `{ email, password }`  
-    • Creates a new user and issues a session token  
-  - `POST /api/auth/login`  
-    • Accepts `{ email, password }`  
-    • Verifies credentials and returns a session token  
-  - `POST /api/auth/logout`  
-    • Invalidates the session token on the server  
-  - `GET /api/dashboard/data`  
-    • Requires a valid session  
-    • Returns user-specific data or dashboard items  
+**Key Endpoints:**
 
-- **Communication**
-  - Frontend sends JSON requests; backend replies with JSON and appropriate HTTP status codes.  
-  - Protected routes check for a valid session token (in cookies or Authorization header).
+- **Authentication** (`/api/auth/*`):
+  - `POST /api/auth/signup` → Register a new user.
+  - `POST /api/auth/login` → Obtain JWT access & refresh tokens.
+  - `POST /api/auth/logout` → Invalidate active session.
+  - `GET /api/auth/me` → Retrieve current user’s profile.
+
+- **Portfolio & Trades** (`/api/portfolio/*` & `/api/trades/*`):
+  - `GET /api/portfolio` → List user’s portfolios.
+  - `POST /api/portfolio` → Create new portfolio.
+  - `GET /api/portfolio/:id` → Details and performance metrics.
+  - `GET /api/trades?portfolioId=:id` → List trades for a portfolio.
+  - `POST /api/trades` → Submit a new trade request.
+
+- **Strategies** (`/api/strategies/*`):
+  - `GET /api/strategies` → User’s saved strategies.
+  - `POST /api/strategies` → Create or update strategy config.
+  - `PATCH /api/strategies/:id/activate` → Toggle strategy on/off.
+
+- **Alerts & Notifications** (`/api/alerts/*`):
+  - `GET /api/alerts` → Fetch active alerts.
+  - `POST /api/alerts` → Define a new alert.
+
+- **Real-Time Updates:**
+  - WebSocket or Server-Sent Events endpoint (e.g., `/api/realtime`) for live price/portfolio streams.
 
 ## 5. Hosting Solutions
 
-- **Cloud Provider**:  
-  - **Vercel** (recommended) offers seamless Next.js deployments, auto-scaling, and built-in CDN.  
-  - Alternatively, **Netlify** or any Node.js-capable host will work.
+**Frontend & BFF (Next.js):**
+- Deployed on Vercel for automatic scaling, global edge network, and zero-config SSL.
 
-- **Benefits**
-  - **Reliability**: Global servers and failover across regions.  
-  - **Scalability**: Auto-scale serverless functions based on traffic.  
-  - **Cost-Effectiveness**: Pay-per-use model means low cost for small projects.
+**Core Services & Databases:**
+- **AWS Elastic Container Service (ECS) Fargate** for microservices.
+- **Amazon RDS (PostgreSQL)** Multi-AZ for high availability.
+- **Amazon ElastiCache (Redis)** Cluster mode enabled.
+- **MongoDB Atlas** for managed audit log storage.
+
+**Benefits:**
+- Pay-as-you-go, auto-scaling on demand.
+- High uptime SLAs and automated backups.
+- Global distribution for lowest-latency access.
 
 ## 6. Infrastructure Components
 
-- **Load Balancer**
-  - Provided by the hosting platform—distributes API requests across function instances.
-
-- **CDN (Content Delivery Network)**
-  - Vercel’s global edge network caches static assets (CSS, JS, images) for faster page loads.
-
-- **Caching**
-  - **Redis** (optional) for session storage or caching dashboard queries to reduce database load.
-
-- **Object Storage**
-  - For file uploads or backups, integrate with AWS S3 or similar services.
-
-- **Message Queue**
-  - In future, use **RabbitMQ** or **Kafka** for background tasks (e.g., email notifications).
+- **Load Balancer:** AWS Application Load Balancer routes traffic to ECS tasks.
+- **CDN:** Vercel’s edge network (or AWS CloudFront) caches static assets and API responses where appropriate.
+- **Caching Layer:** Redis for session data, rate limiting, and pub/sub events.
+- **Message Broker:** Redis pub/sub or RabbitMQ for distributing real-time updates to connected dashboards.
+- **CI/CD Pipeline:** GitHub Actions builds, tests, and deploys on merge to `main`.
+- **Secrets Management:** AWS Secrets Manager (or Vercel Environment Variables) for credentials and API keys.
 
 ## 7. Security Measures
 
-- **Authentication & Authorization**
-  - Passwords hashed with **bcrypt** and salted.  
-  - Session tokens stored in secure, HttpOnly cookies or Authorization headers.  
-  - Protected endpoints verify tokens before proceeding.
-
-- **Data Encryption**
-  - **HTTPS/TLS** encrypts data in transit.  
-  - Database connections use SSL to encrypt data between the app and the database.
-
-- **Input Validation**
-  - Every incoming request is validated (e.g., valid email format, password length) to prevent SQL injection or other attacks.
-
-- **Web Security Best Practices**
-  - Enable **CORS** policies to limit allowed origins.  
-  - Use **CSRF tokens** or same-site cookies to prevent cross-site requests.  
-  - Set secure headers with **Helmet** or a similar middleware.
+- **Authentication & Authorization:**
+  - JWT access and refresh tokens with short lifespans.
+  - Role-based access control enforced in API middleware.
+- **Encryption:**
+  - HTTPS/TLS for all in-transit data.
+  - AES-256 encryption at rest for RDS volumes and S3 buckets.
+- **Input Validation & Sanitization:**
+  - Joi or Zod for request schema validation.
+  - ORM parameterization to prevent SQL injection.
+- **API Protection:**
+  - Rate limiting per IP or API key.
+  - CORS policies restricted to allowed origins.
+- **Vulnerability Management:**
+  - Regular dependency audits (npm audit).
+  - OWASP Top 10 compliance checks.
 
 ## 8. Monitoring and Maintenance
 
-- **Performance Monitoring**
-  - Integrate **Sentry** or **LogRocket** for real-time crash reporting and performance tracing.  
-  - Use Vercel’s built-in analytics to track request latencies and error rates.
-
-- **Logging**
-  - Structured logs (JSON) for all API requests and errors, shipped to a log management service like **Datadog** or **Logflare**.
-
-- **Health Checks**
-  - Define a `/health` endpoint that returns a 200 status if the service is up and the database is reachable.
-
-- **Maintenance Strategies**
-  - Automated migrations run on deploy to keep the database schema up to date.  
-  - Scheduled dependency audits and security scans (e.g., `npm audit`).
-  - Regular backups of the database (daily or weekly depending on usage).
+- **Logging & Error Tracking:**
+  - Application logs forwarded to AWS CloudWatch.
+  - Sentry for real-time error alerts and stack traces.
+- **Metrics & Dashboards:**
+  - Prometheus/Grafana or DataDog for CPU, memory, latency, and custom business metrics.
+  - Alerts configured for high error rates or resource exhaustion.
+- **Backup & Recovery:**
+  - Automated nightly snapshots of PostgreSQL with point-in-time recovery.
+  - Test restore procedures quarterly.
+- **Maintenance Strategy:**
+  - Rolling deployments to avoid downtime.
+  - Dependency updates on a monthly cadence.
+  - Security patching windows scheduled off-peak.
 
 ## 9. Conclusion and Overall Backend Summary
 
-The backend for **codeguide-starter** is built on Next.js API Routes and Node.js, paired with PostgreSQL for data and optional Redis for caching. It follows a clear layered architecture that keeps code easy to maintain and extend. With RESTful endpoints for authentication and data, secure practices like password hashing and HTTPS, and hosting on Vercel for scalability and global performance, this setup meets the project’s goals for a fast, secure, and developer-friendly foundation. Future enhancements—such as background job queues, advanced monitoring, or richer data models—can be added without disrupting the core structure.
+The backend is a modular, scalable system designed to power an automated stock trading dashboard. A Next.js BFF layer provides secure, low-latency APIs to the React frontend, while isolated microservices manage compute-intensive trading logic. A robust PostgreSQL foundation—augmented by Redis caching and MongoDB for logging—ensures data integrity, performance, and auditability. Hosted across Vercel and AWS with automated CI/CD, monitoring, and security best practices, the infrastructure aligns with the project’s goals: real-time trading insights, responsive user experience, and reliable operations at scale. Interactive features like WebSockets for live updates and flexible strategy configuration further differentiate this setup, delivering a comprehensive and enterprise-ready trading dashboard.
